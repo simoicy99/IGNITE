@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3010/api/v1';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
 export async function getToken(): Promise<string | null> {
   try {
