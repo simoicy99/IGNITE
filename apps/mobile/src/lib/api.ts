@@ -1,9 +1,13 @@
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
 export async function getToken(): Promise<string | null> {
   try {
+    if (Platform.OS === 'web') {
+      return localStorage.getItem('auth_token');
+    }
     return await SecureStore.getItemAsync('auth_token');
   } catch {
     return null;
@@ -11,10 +15,18 @@ export async function getToken(): Promise<string | null> {
 }
 
 export async function setToken(token: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    localStorage.setItem('auth_token', token);
+    return;
+  }
   await SecureStore.setItemAsync('auth_token', token);
 }
 
 export async function removeToken(): Promise<void> {
+  if (Platform.OS === 'web') {
+    localStorage.removeItem('auth_token');
+    return;
+  }
   await SecureStore.deleteItemAsync('auth_token');
 }
 

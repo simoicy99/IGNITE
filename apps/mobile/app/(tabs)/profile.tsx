@@ -8,6 +8,7 @@ import {
   Alert,
   TextInput,
 } from 'react-native';
+import { Platform } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { authApi, matchesApi } from '../../src/lib/api';
 import { useRouter } from 'expo-router';
@@ -66,6 +67,12 @@ export default function ProfileScreen() {
   }
 
   function handleLogout() {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to sign out?')) {
+        logout();
+      }
+      return;
+    }
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: logout },

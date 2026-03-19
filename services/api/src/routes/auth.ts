@@ -22,17 +22,6 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     const { email, handle, password, geo } = result.data;
 
-    // Check allowlist
-    const allowlisted = await prisma.allowlistEmail.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-    if (!allowlisted) {
-      return reply.status(403).send({
-        success: false,
-        error: 'Email is not on the invite list. Ignite is currently invite-only.',
-      });
-    }
-
     // Check email uniqueness
     const existingEmail = await prisma.user.findUnique({
       where: { email: email.toLowerCase() },

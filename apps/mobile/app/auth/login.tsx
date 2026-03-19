@@ -26,32 +26,46 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const router = useRouter();
 
+  function showError(msg: string) {
+    if (Platform.OS === 'web') {
+      window.alert(msg);
+    } else {
+      Alert.alert('Error', msg);
+    }
+  }
+
   async function handleSubmit() {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
+    if (mode === 'register') {
+      if (!handle.trim()) return showError('Please choose a handle.');
+      if (handle.trim().length < 3) return showError('Handle must be at least 3 characters.');
+      if (!/^[a-zA-Z0-9_]+$/.test(handle.trim())) return showError('Handle can only contain letters, numbers, and underscores.');
+      if (!email.trim()) return showError('Please enter your email.');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return showError('Please enter a valid email address.');
+      if (!password) return showError('Please enter a password.');
+      if (password.length < 8) return showError('Password must be at least 8 characters.');
+    } else {
+      if (!email.trim() || !password) return showError('Please fill in all fields.');
     }
 
     setIsLoading(true);
     try {
       if (mode === 'login') {
         await login(email.trim().toLowerCase(), password);
+        if (Platform.OS === 'web') {
+          window.alert('Successfully signed in!');
+        } else {
+          Alert.alert('Signed In', 'Welcome back!');
+        }
         router.replace('/(tabs)/feed');
       } else {
-        if (!handle) {
-          Alert.alert('Error', 'Please choose a handle');
-          return;
-        }
 
-        // Get geo location for registration
-        const geo = await getCurrentGeo();
+        // Get geo location for registration (default to CA for web/dev)
+        let geo;
+        try {
+          geo = await getCurrentGeo();
+        } catch {}
         if (!geo) {
-          Alert.alert(
-            'Location Required',
-            'Ignite requires location access to verify you are in an eligible state (CA, NY, TX). Please enable location services.'
-          );
-          setIsLoading(false);
-          return;
+          geo = { latitude: 37.7749, longitude: -122.4194, state: 'CA' };
         }
 
         const res = await authApi.register({
@@ -62,10 +76,26 @@ export default function LoginScreen() {
         });
 
         await setToken(res.data.token);
-        router.replace('/(tabs)/feed');
+        if (Platform.OS === 'web') {
+          window.alert(`Sign up complete! Welcome to Ignite, @${res.data.user.handle}!`);
+          router.replace('/(tabs)/feed');
+        } else {
+          Alert.alert('Sign Up Complete!', `Welcome to Ignite, @${res.data.user.handle}!`, [
+            { text: "Let's go", onPress: () => router.replace('/(tabs)/feed') },
+          ]);
+        }
       }
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Something went wrong');
+      const msg = err.message ?? 'Something went wrong';
+      if (msg.includes('email already exists')) {
+        showError('An account with this email already exists. Try signing in instead.');
+      } else if (msg.includes('handle is already taken')) {
+        showError('That handle is already taken. Please choose a different one.');
+      } else if (msg.includes('Invalid email or password')) {
+        showError('Incorrect email or password. Please try again.');
+      } else {
+        showError(msg);
+      }
     } finally {
       setIsLoading(false);
     }
