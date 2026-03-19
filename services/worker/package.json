@@ -1,0 +1,20 @@
+{
+  "name": "worker",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@ignite/ledger": "workspace:*",
+    "@ignite/shared": "workspace:*",
+    "@prisma/client": "^5.14.0",
+    "bullmq": "^5.7.0",
+    "ioredis": "^5.3.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}

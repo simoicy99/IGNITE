@@ -1,0 +1,12 @@
+{
+  "name": "@ignite/payments",
+  "version": "0.0.1",
+  "main": "src/index.ts",
+  "dependencies": {
+    "stripe": "^16.0.0",
+    "@ignite/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

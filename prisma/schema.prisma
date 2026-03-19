@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AllowlistEmail {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  invitedBy   String?
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  handle             String   @unique
+  passwordHash       String?
+  handleChangedCount Int      @default(0)
+  chessUsername      String?
+  psnTag             String?
+  xboxTag            String?
+  lastGeoState       String?
+  lastGeoAt          DateTime?
+  isAdmin            Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  walletAccounts  WalletAccount[]
+  posts           Post[]
+  comments        Comment[]
+  matchesCreated  Match[]         @relation("Creator")
+  matchesAccepted Match[]         @relation("Accepter")
+  proofs          Proof[]
+  handleHistory   HandleHistory[]
+  withdrawals     Withdrawal[]
+}
+
+model HandleHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  oldHandle String
+  newHandle String
+  changedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+enum WalletAccountType {
+  AVAILABLE
+  LOCKED
+  PENDING
+}
+
+model WalletAccount {
+  id      String            @id @default(cuid())
+  userId  String
+  type    WalletAccountType
+  user    User              @relation(fields: [userId], references: [id])
+  entries LedgerEntry[]
+
+  @@unique([userId, type])
+}
+
+model LedgerEntry {
+  id             String   @id @default(cuid())
+  accountId      String
+  amountCents    Int
+  direction      String   // "CREDIT" or "DEBIT"
+  eventType      String
+  matchId        String?
+  withdrawalId   String?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+  metadata       Json?
+
+  account WalletAccount @relation(fields: [accountId], references: [id])
+}
+
+enum MatchStatus {
+  CREATED
+  ACCEPTED
+  FUNDED
+  IN_PROGRESS
+  SUBMITTED
+  VERIFIED
+  SETTLED
+  DISPUTED
+  RESOLVED
+  CANCELED
+}
+
+model MatchTemplate {
+  id        String   @id @default(cuid())
+  game      String
+  name      String
+  metadata  Json
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  matches Match[]
+}
+
+model Match {
+  id          String      @id @default(cuid())
+  game        String
+  templateId  String
+  stakeCents  Int
+  status      MatchStatus @default(CREATED)
+  creatorId   String
+  accepterId  String?
+  chessLink   String?
+  platform    String?     // "PS5" | "XBOX" for 2K
+  submittedAt DateTime?
+  disputeDeadline DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  template MatchTemplate @relation(fields: [templateId], references: [id])
+  creator  User          @relation("Creator", fields: [creatorId], references: [id])
+  accepter User?         @relation("Accepter", fields: [accepterId], references: [id])
+  proofs   Proof[]
+  dispute  Dispute?
+  post     Post?
+}
+
+model Proof {
+  id        String   @id @default(cuid())
+  matchId   String
+  userId    String
+  type      String
+  url       String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([matchId, userId, type])
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED
+}
+
+model Dispute {
+  id           String        @id @default(cuid())
+  matchId      String        @unique
+  openedById   String
+  status       DisputeStatus @default(OPEN)
+  bondCents    Int
+  bondLocked   Boolean       @default(true)
+  decision     String?       // "UPHELD" | "DENIED"
+  decidedById  String?
+  reason       String?
+  createdAt    DateTime      @default(now())
+  resolvedAt   DateTime?
+
+  match Match @relation(fields: [matchId], references: [id])
+}
+
+enum PostType {
+  CHALLENGE
+  SOCIAL
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  userId    String
+  type      PostType
+  body      String?
+  mediaUrl  String?
+  matchId   String?  @unique
+  createdAt DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  match    Match?    @relation(fields: [matchId], references: [id])
+  comments Comment[]
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  body      String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model Withdrawal {
+  id          String           @id @default(cuid())
+  userId      String
+  amountCents Int
+  status      WithdrawalStatus @default(PENDING)
+  approvedById String?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model PaymentIntent {
+  id              String   @id @default(cuid())
+  userId          String
+  providerIntentId String  @unique
+  amountCents     Int
+  status          String   @default("pending")
+  provider        String   @default("stripe_test")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

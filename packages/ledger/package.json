@@ -1,0 +1,12 @@
+{
+  "name": "@ignite/ledger",
+  "version": "0.0.1",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "@ignite/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
