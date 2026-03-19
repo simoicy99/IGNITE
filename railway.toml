@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install -g pnpm && pnpm install && cd services/api && pnpm exec prisma generate"
+buildCommand = "pnpm install && cd services/api && pnpm exec prisma generate"
 
 [deploy]
 startCommand = "cd services/api && node_modules/.bin/tsx src/index.ts"
