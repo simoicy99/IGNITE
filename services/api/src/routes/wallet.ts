@@ -2,15 +2,18 @@ import { FastifyPluginAsync } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import { TopUpSchema, WithdrawSchema } from '@ignite/shared';
 import { getAllBalances, initiateWithdrawal, getTransactions } from '@ignite/ledger';
-import { StripeTestAdapter } from '@ignite/payments';
+import { StripeTestAdapter, NuveiAdapter, NuveiTestAdapter } from '@ignite/payments';
 
 const prisma = new PrismaClient();
 
 const walletRoutes: FastifyPluginAsync = async (fastify) => {
-  const stripeAdapter = new StripeTestAdapter(
-    process.env.STRIPE_SECRET_KEY!,
-    process.env.STRIPE_WEBHOOK_SECRET!
-  );
+  // Use Nuvei if configured, otherwise fallback to Stripe test
+  const useNuvei = process.env.NUVEI_MERCHANT_ID && process.env.NUVEI_SECRET_KEY;
+  const paymentAdapter = useNuvei
+    ? new NuveiAdapter()
+    : process.env.NODE_ENV === 'production'
+    ? new StripeTestAdapter(process.env.STRIPE_SECRET_KEY!, process.env.STRIPE_WEBHOOK_SECRET!)
+    : new NuveiTestAdapter();
 
   /**
    * GET /wallet
@@ -184,6 +187,187 @@ const walletRoutes: FastifyPluginAsync = async (fastify) => {
         success: true,
         data: withdrawals,
       });
+    }
+  );
+
+  /**
+   * POST /wallet/topup/card (Nuvei)
+   * Create a card payment session
+   */
+  fastify.post(
+    '/wallet/topup/card',
+    { preHandler: [fastify.authenticate, fastify.geoGate] },
+    async (request, reply) => {
+      const result = TopUpSchema.safeParse(request.body);
+      if (!result.success) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation error',
+          details: result.error.flatten(),
+        });
+      }
+
+      const { amountCents } = result.data;
+
+      try {
+        const session = await (paymentAdapter as any).createCardPaymentSession(
+          request.userId,
+          amountCents
+        );
+
+        // Record pending payment
+        await prisma.paymentIntent.create({
+          data: {
+            userId: request.userId,
+            providerIntentId: session.orderId,
+            amountCents,
+            status: 'pending',
+            provider: 'nuvei',
+          },
+        });
+
+        return reply.send({
+          success: true,
+          data: {
+            sessionToken: session.sessionToken,
+            orderId: session.orderId,
+            redirectUrl: session.redirectUrl,
+          },
+        });
+      } catch (err: any) {
+        return reply.status(500).send({
+          success: false,
+          error: err.message,
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /wallet/topup/bank (Nuvei)
+   * Create a bank transfer (ACH) session
+   */
+  fastify.post(
+    '/wallet/topup/bank',
+    { preHandler: [fastify.authenticate, fastify.geoGate] },
+    async (request, reply) => {
+      const result = TopUpSchema.safeParse(request.body);
+      if (!result.success) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation error',
+          details: result.error.flatten(),
+        });
+      }
+
+      const { amountCents } = result.data;
+
+      try {
+        const session = await (paymentAdapter as any).createBankTransferSession(
+          request.userId,
+          amountCents
+        );
+
+        // Record pending payment
+        await prisma.paymentIntent.create({
+          data: {
+            userId: request.userId,
+            providerIntentId: session.orderId,
+            amountCents,
+            status: 'pending',
+            provider: 'nuvei_bank',
+          },
+        });
+
+        return reply.send({
+          success: true,
+          data: {
+            sessionToken: session.sessionToken,
+            orderId: session.orderId,
+            redirectUrl: session.redirectUrl,
+          },
+        });
+      } catch (err: any) {
+        return reply.status(500).send({
+          success: false,
+          error: err.message,
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /wallet/withdraw/bank (Nuvei)
+   * Withdraw to bank account via ACH
+   */
+  fastify.post(
+    '/wallet/withdraw/bank',
+    { preHandler: [fastify.authenticate, fastify.geoGate] },
+    async (request, reply) => {
+      const result = WithdrawSchema.safeParse(request.body);
+      if (!result.success) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation error',
+          details: result.error.flatten(),
+        });
+      }
+
+      const { amountCents } = result.data;
+
+      // Check balance
+      const balances = await getAllBalances(request.userId);
+      if (balances.available < amountCents) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Insufficient funds',
+        });
+      }
+
+      // Get bank details from request
+      const { bankAccount } = request.body as any;
+      if (!bankAccount?.accountNumber || !bankAccount?.routingNumber) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Bank account details required',
+        });
+      }
+
+      try {
+        // Create withdrawal in Nuvei
+        const withdrawal = await (paymentAdapter as any).createWithdrawal(
+          request.userId,
+          amountCents,
+          bankAccount
+        );
+
+        // Debit user's wallet
+        await initiateWithdrawal(request.userId, amountCents, withdrawal.payoutId);
+
+        // Record withdrawal
+        await prisma.withdrawal.create({
+          data: {
+            userId: request.userId,
+            amountCents,
+            status: 'PENDING',
+            provider: 'nuvei',
+            providerWithdrawalId: withdrawal.payoutId,
+          },
+        });
+
+        return reply.send({
+          success: true,
+          data: {
+            payoutId: withdrawal.payoutId,
+            status: withdrawal.status,
+          },
+        });
+      } catch (err: any) {
+        return reply.status(500).send({
+          success: false,
+          error: err.message,
+        });
+      }
     }
   );
 };

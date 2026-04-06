@@ -106,4 +106,20 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify({ email, note }),
     }),
+
+  // Matches
+  getMatches: (query?: string) =>
+    apiFetch(`/admin/matches${query ? `?${query}` : ''}`),
+
+  getMatch: (id: string) =>
+    apiFetch(`/admin/matches/${id}`),
+
+  cancelMatch: (id: string) =>
+    apiFetch(`/admin/matches/${id}/cancel`, { method: 'POST' }),
+
+  forceSettleMatch: (id: string, winnerId: string) =>
+    apiFetch(`/admin/matches/${id}/settle`, {
+      method: 'POST',
+      body: JSON.stringify({ winnerId }),
+    }),
 };

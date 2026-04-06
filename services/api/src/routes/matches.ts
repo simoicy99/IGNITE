@@ -24,6 +24,7 @@ const prisma = new PrismaClient();
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
 const chessVerifyQueue = new Queue('chess-verify', { connection: redis });
 const disputeTimeoutQueue = new Queue('dispute-timeout', { connection: redis });
+const noShowTimeoutQueue = new Queue('no-show-timeout', { connection: redis });
 
 const matchRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -324,6 +325,21 @@ const matchRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       if (!opponentProof) {
+        // First player to submit - enqueue no-show timeout for opponent
+        await noShowTimeoutQueue.add(
+          'no-show-timeout',
+          {
+            matchId: id,
+            expectedPlayerId: opponentId,
+            submitterId: request.userId,
+            stakeCents: match.stakeCents,
+          },
+          {
+            delay: DISPUTE_WINDOW_MINUTES * 60 * 1000,
+            jobId: `no-show-timeout-${id}`,
+          }
+        );
+
         return reply.send({
           success: true,
           message: 'Result submitted. Waiting for opponent to submit their result.',
@@ -337,13 +353,39 @@ const matchRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (myClaimedWin === opponentClaimedWin) {
         // CONFLICT: both claim to have won, or both claim to have lost
+        // Auto-create dispute and lock bonds from both players
+        const bondCents = calcDisputeBond(match.stakeCents);
+
+        try {
+          // Lock dispute bonds from both players
+          await Promise.all([
+            lockDisputeBond(request.userId, bondCents, match.id, `dispute:${match.id}:bond:${request.userId}`),
+            lockDisputeBond(opponentId, bondCents, match.id, `dispute:${match.id}:bond:${opponentId}`),
+          ]);
+        } catch (err: any) {
+          // If bonds can't be locked, mark as disputed without bonds
+          console.error(`Failed to lock dispute bonds for match ${match.id}:`, err);
+        }
+
         await prisma.match.update({
           where: { id },
           data: { status: 'DISPUTED' },
         });
+
+        // Create dispute record
+        await prisma.dispute.create({
+          data: {
+            matchId: id,
+            openedById: request.userId,
+            bondCents,
+            bondLocked: true,
+            reason: 'Conflicting results submitted - both players claimed different outcomes',
+          },
+        });
+
         return reply.send({
           success: true,
-          message: 'Both players submitted conflicting results. Admin will review.',
+          message: 'Both players submitted conflicting results. Dispute opened with bonds locked.',
         });
       }
 

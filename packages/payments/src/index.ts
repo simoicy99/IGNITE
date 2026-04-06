@@ -12,3 +12,4 @@ export interface WebhookEvent {
 }
 
 export { StripeTestAdapter } from './stripe-test';
+export { NuveiAdapter, NuveiTestAdapter } from './nuvei';

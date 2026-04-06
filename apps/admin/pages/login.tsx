@@ -1,103 +1,116 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import { adminApi, setAuthToken } from '../lib/api';
+import { Button } from '../components/ui';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const [email, setEmail] = useState('admin@ignite.gg');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setLoading(true);
     setError('');
-    setIsLoading(true);
-
     try {
       const res = await adminApi.login(email, password);
-      if (!res.data.user.isAdmin) {
-        setError('Access denied: Admin account required');
-        return;
-      }
       setAuthToken(res.data.token);
       router.push('/');
     } catch (err: any) {
-      setError(err.message ?? 'Login failed');
+      setError(err.message || 'Invalid credentials');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   }
 
   return (
     <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
       minHeight: '100vh',
-      background: 'var(--bg)',
-      padding: '24px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'radial-gradient(ellipse at top, #1a0a0a 0%, #080810 60%)',
+      padding: 24,
     }}>
-      <div style={{ width: '100%', maxWidth: '400px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 900, color: 'var(--accent)', letterSpacing: '6px' }}>
-            IGNITE
-          </h1>
-          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>Admin Console</p>
+      <div style={{ width: '100%', maxWidth: 400 }}>
+
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 16,
+            background: 'linear-gradient(140deg,#ef4444,#991b1b)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 28, margin: '0 auto 16px',
+            boxShadow: '0 8px 24px rgba(239,68,68,0.4)',
+          }}>🔥</div>
+          <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: 2, color: '#f0f0f5' }}>IGNITE</h1>
+          <p style={{ color: 'rgba(255,255,255,0.38)', fontSize: 13, marginTop: 4 }}>Admin Console</p>
         </div>
 
-        <div className="card">
-          <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '20px' }}>Sign In</h2>
-
-          {error && (
-            <div style={{
-              background: '#EF444422',
-              border: '1px solid #EF444444',
-              borderRadius: '7px',
-              padding: '10px 12px',
-              color: '#EF4444',
-              fontSize: '13px',
-              marginBottom: '16px',
-            }}>
-              {error}
-            </div>
-          )}
-
+        {/* Card */}
+        <div style={{
+          background: '#121220',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 16, padding: '28px 28px 24px',
+        }}>
           <form onSubmit={handleSubmit}>
-            <div className="form-group">
-              <label htmlFor="email">Email</label>
+            <div style={{ marginBottom: 18 }}>
+              <label>Email Address</label>
               <input
-                id="email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={e => setEmail(e.target.value)}
                 placeholder="admin@ignite.gg"
                 required
+                style={{ marginTop: 6 }}
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
+            <div style={{ marginBottom: error ? 16 : 24 }}>
+              <label>Password</label>
               <input
-                id="password"
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
+                style={{ marginTop: 6 }}
               />
             </div>
 
-            <button
+            {error && (
+              <div style={{
+                background: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.25)',
+                borderRadius: 9, padding: '10px 14px',
+                color: '#f87171', fontSize: 13, marginBottom: 18,
+              }}>
+                {error}
+              </div>
+            )}
+
+            <Button
               type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
-              disabled={isLoading}
+              variant="primary"
+              size="lg"
+              loading={loading}
+              style={{ width: '100%' }}
             >
-              {isLoading ? 'Signing in...' : 'Sign In'}
-            </button>
+              {loading ? 'Signing in…' : 'Sign In'}
+            </Button>
           </form>
+
+          <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.06)', margin: '20px 0' }} />
+          <p style={{ textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.25)' }}>
+            Default: admin@ignite.gg / AdminPass123!
+          </p>
         </div>
+
+        <p style={{ textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.2)', marginTop: 24 }}>
+          © 2026 IGNITE. All rights reserved.
+        </p>
       </div>
     </div>
   );

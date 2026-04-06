@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import { ResolveDisputeSchema, AddAllowlistEmailSchema } from '@ignite/shared';
-import { settleDispute, pendingToAvailable, unlockFunds, releaseDisputeBond } from '@ignite/ledger';
+import { settleDispute, pendingToAvailable, unlockFunds, releaseDisputeBond, settleMatch } from '@ignite/ledger';
 import { calcWinnerPayout } from '@ignite/shared';
 
 const prisma = new PrismaClient();
@@ -11,10 +11,10 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.authenticateAdmin);
 
   /**
-   * GET /admin/disputes
+   * GET /disputes
    * List all disputes (open first)
    */
-  fastify.get('/admin/disputes', async (request, reply) => {
+  fastify.get('/disputes', async (request, reply) => {
     const query = request.query as { status?: string; cursor?: string; limit?: string };
     const limit = Math.min(parseInt(query.limit ?? '20'), 100);
 
@@ -52,7 +52,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    * GET /admin/disputes/:id
    * Get dispute details
    */
-  fastify.get('/admin/disputes/:id', async (request, reply) => {
+  fastify.get('/disputes/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const dispute = await prisma.dispute.findUnique({
@@ -89,7 +89,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    *   - Bond forfeited to opponent
    *   - Original result stands
    */
-  fastify.post('/admin/disputes/:id/resolve', async (request, reply) => {
+  fastify.post('/disputes/:id/resolve', async (request, reply) => {
     const { id } = request.params as { id: string };
     const result = ResolveDisputeSchema.safeParse(request.body);
     if (!result.success) {
@@ -257,10 +257,10 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
-   * GET /admin/withdrawals
+   * GET /withdrawals
    * List pending withdrawals
    */
-  fastify.get('/admin/withdrawals', async (request, reply) => {
+  fastify.get('/withdrawals', async (request, reply) => {
     const query = request.query as { status?: string };
 
     const withdrawals = await prisma.withdrawal.findMany({
@@ -278,7 +278,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    * POST /admin/withdrawals/:id/approve
    * Approve a withdrawal
    */
-  fastify.post('/admin/withdrawals/:id/approve', async (request, reply) => {
+  fastify.post('/withdrawals/:id/approve', async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const withdrawal = await prisma.withdrawal.findUnique({ where: { id } });
@@ -305,7 +305,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    * POST /admin/withdrawals/:id/reject
    * Reject a withdrawal and return funds
    */
-  fastify.post('/admin/withdrawals/:id/reject', async (request, reply) => {
+  fastify.post('/withdrawals/:id/reject', async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const withdrawal = await prisma.withdrawal.findUnique({ where: { id } });
@@ -353,7 +353,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    * GET /admin/users
    * List users
    */
-  fastify.get('/admin/users', async (request, reply) => {
+  fastify.get('/users', async (request, reply) => {
     const query = request.query as { cursor?: string; limit?: string; search?: string };
     const limit = Math.min(parseInt(query.limit ?? '20'), 100);
 
@@ -396,7 +396,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    * POST /admin/allowlist
    * Add email to allowlist
    */
-  fastify.post('/admin/allowlist', async (request, reply) => {
+  fastify.post('/allowlist', async (request, reply) => {
     const result = AddAllowlistEmailSchema.safeParse(request.body);
     if (!result.success) {
       return reply.status(400).send({
@@ -422,10 +422,10 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
-   * GET /admin/stats
+   * GET /stats
    * Platform-wide statistics
    */
-  fastify.get('/admin/stats', async (request, reply) => {
+  fastify.get('/stats', async (request, reply) => {
     const [
       totalUsers,
       totalMatches,
@@ -453,12 +453,172 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
   });
-};
 
-// Need to import settleMatch
-async function settleMatch(winnerId: string, loserId: string, stakeCents: number, matchId: string) {
-  const { settleMatch: settle } = await import('@ignite/ledger');
-  return settle(winnerId, loserId, stakeCents, matchId);
-}
+  /**
+   * GET /matches
+   * List all matches with filtering
+   */
+  fastify.get('/matches', async (request, reply) => {
+    const query = request.query as { status?: string; cursor?: string; limit?: string };
+    const limit = Math.min(parseInt(query.limit ?? '20'), 100);
+
+    const matches = await prisma.match.findMany({
+      where: query.status ? { status: query.status as any } : undefined,
+      take: limit + 1,
+      cursor: query.cursor ? { id: query.cursor } : undefined,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: { select: { id: true, handle: true, email: true } },
+        accepter: { select: { id: true, handle: true, email: true } },
+        template: true,
+        dispute: true,
+      },
+    });
+
+    const hasMore = matches.length > limit;
+    const items = matches.slice(0, limit);
+    const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+    return reply.send({
+      success: true,
+      data: { items, nextCursor },
+    });
+  });
+
+  /**
+   * GET /admin/matches/:id
+   * Get match details with proofs
+   */
+  fastify.get('/matches/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const match = await prisma.match.findUnique({
+      where: { id },
+      include: {
+        creator: { select: { id: true, handle: true, email: true } },
+        accepter: { select: { id: true, handle: true, email: true } },
+        template: true,
+        proofs: true,
+        dispute: true,
+      },
+    });
+
+    if (!match) {
+      return reply.status(404).send({ success: false, error: 'Match not found' });
+    }
+
+    return reply.send({ success: true, data: match });
+  });
+
+  /**
+   * POST /admin/matches/:id/cancel
+   * Cancel a match and refund both players
+   */
+  fastify.post('/matches/:id/cancel', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const match = await prisma.match.findUnique({
+      where: { id },
+      include: { creator: true, accepter: true },
+    });
+
+    if (!match) {
+      return reply.status(404).send({ success: false, error: 'Match not found' });
+    }
+
+    if (!['CREATED', 'ACCEPTED', 'FUNDED'].includes(match.status)) {
+      return reply.status(400).send({
+        success: false,
+        error: `Cannot cancel match in status: ${match.status}`,
+      });
+    }
+
+    // Unlock funds for both players
+    if (match.status === 'FUNDED' && match.accepterId) {
+      await Promise.all([
+        unlockFunds(match.creatorId, match.stakeCents, match.id, `admin-cancel:${match.id}:creator`),
+        unlockFunds(match.accepterId, match.stakeCents, match.id, `admin-cancel:${match.id}:accepter`),
+      ]);
+    }
+
+    await prisma.match.update({
+      where: { id },
+      data: { status: 'CANCELED' },
+    });
+
+    return reply.send({
+      success: true,
+      message: 'Match canceled and funds refunded',
+    });
+  });
+
+  /**
+   * POST /admin/matches/:id/settle
+   * Force settle a match (admin override)
+   */
+  fastify.post('/matches/:id/settle', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { winnerId } = request.body as { winnerId: string };
+
+    const match = await prisma.match.findUnique({
+      where: { id },
+      include: { creator: true, accepter: true },
+    });
+
+    if (!match) {
+      return reply.status(404).send({ success: false, error: 'Match not found' });
+    }
+
+    if (!['SUBMITTED', 'DISPUTED', 'IN_PROGRESS'].includes(match.status)) {
+      return reply.status(400).send({
+        success: false,
+        error: `Cannot settle match in status: ${match.status}`,
+      });
+    }
+
+    if (winnerId !== match.creatorId && winnerId !== match.accepterId) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Invalid winner ID',
+      });
+    }
+
+    const loserId = winnerId === match.creatorId ? match.accepterId! : match.creatorId;
+
+    // Settle the match
+    await settleMatch(winnerId, loserId, match.stakeCents, match.id);
+
+    // Move to VERIFIED then SETTLED
+    await prisma.match.update({
+      where: { id },
+      data: {
+        status: 'SETTLED',
+        metadata: {
+          ...(match.metadata as object || {}),
+          adminSettled: true,
+          settledBy: request.userId,
+          settledAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    // For non-chess, move pending to available immediately
+    if (match.game !== 'CHESS') {
+      const winnerPayout = calcWinnerPayout(match.stakeCents);
+      await pendingToAvailable(
+        winnerId,
+        winnerPayout,
+        match.id,
+        `admin-settle:${match.id}:payout`
+      );
+    }
+
+    return reply.send({
+      success: true,
+      message: 'Match settled by admin',
+      data: { winnerId, loserId },
+    });
+  });
+};
 
 export default adminRoutes;

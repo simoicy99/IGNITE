@@ -1,8 +1,8 @@
 import { Worker, Queue, Job } from 'bullmq';
 import Redis from 'ioredis';
 import { PrismaClient } from '@prisma/client';
-import { pendingToAvailable, settleMatch } from '@ignite/ledger';
-import { calcWinnerPayout } from '@ignite/shared';
+import { pendingToAvailable, settleMatch, lockDisputeBond } from '@ignite/ledger';
+import { calcWinnerPayout, calcDisputeBond } from '@ignite/shared';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 
@@ -25,6 +25,13 @@ interface DisputeTimeoutJobData {
   matchId: string;
   winnerId: string;
   loserId: string;
+  stakeCents: number;
+}
+
+interface NoShowTimeoutJobData {
+  matchId: string;
+  expectedPlayerId: string;
+  submitterId: string;
   stakeCents: number;
 }
 
@@ -230,6 +237,114 @@ const disputeTimeoutWorker = new Worker<DisputeTimeoutJobData>(
   }
 );
 
+// ─── no-show-timeout Worker ─────────────────────────────────────────────────
+/**
+ * Handles players who don't submit results within the timeout window.
+ * If Player A submits and Player B doesn't respond within 10 minutes,
+ * Player B forfeits and Player A wins automatically.
+ */
+const noShowTimeoutWorker = new Worker<NoShowTimeoutJobData>(
+  'no-show-timeout',
+  async (job: Job<NoShowTimeoutJobData>) => {
+    const { matchId, expectedPlayerId, submitterId, stakeCents } = job.data;
+
+    console.log(`[no-show-timeout] Checking match ${matchId} for no-show`);
+
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: { 
+        proofs: true,
+        dispute: true,
+      },
+    });
+
+    if (!match) {
+      console.error(`[no-show-timeout] Match ${matchId} not found`);
+      throw new Error(`Match ${matchId} not found`);
+    }
+
+    // If match is already settled or disputed, skip
+    if (['SETTLED', 'DISPUTED', 'RESOLVED', 'CANCELED'].includes(match.status)) {
+      console.log(`[no-show-timeout] Match ${matchId} already resolved (${match.status}), skipping`);
+      return { skipped: true, reason: `Already resolved: ${match.status}` };
+    }
+
+    // Check if expected player submitted
+    const expectedPlayerProof = match.proofs.find(
+      (p) => p.userId === expectedPlayerId && 
+      (p.type === 'CHESS_RESULT' || p.type === 'NBA2K_RESULT')
+    );
+
+    if (expectedPlayerProof) {
+      console.log(`[no-show-timeout] Player ${expectedPlayerId} submitted on time, skipping`);
+      return { skipped: true, reason: 'Player submitted on time' };
+    }
+
+    // No-show detected: expected player didn't submit
+    console.log(`[no-show-timeout] No-show detected for player ${expectedPlayerId} in match ${matchId}`);
+
+    // Forfeit: submitter wins automatically
+    const winnerId = submitterId;
+    const loserId = expectedPlayerId;
+
+    try {
+      // Settle the match
+      await settleMatch(winnerId, loserId, stakeCents, matchId);
+    } catch (err: any) {
+      if (!err.message?.includes('already')) throw err;
+      console.log(`[no-show-timeout] Match ${matchId} already settled`);
+    }
+
+    // Update match status
+    await prisma.match.update({
+      where: { id: matchId },
+      data: { 
+        status: 'VERIFIED',
+        metadata: {
+          ...(match.metadata as object || {}),
+          noShowForfeit: true,
+          forfeitingPlayerId: expectedPlayerId,
+        },
+      },
+    });
+
+    // Move PENDING → AVAILABLE for winner
+    const winnerPayout = calcWinnerPayout(stakeCents);
+
+    try {
+      await pendingToAvailable(
+        winnerId,
+        winnerPayout,
+        matchId,
+        `verify:${matchId}:no-show-forfeit`
+      );
+    } catch (err: any) {
+      if (!err.message?.includes('already')) throw err;
+    }
+
+    await prisma.match.update({
+      where: { id: matchId },
+      data: { status: 'SETTLED' },
+    });
+
+    console.log(
+      `[no-show-timeout] Match ${matchId} settled by forfeit. Winner ${winnerId} payout: $${(winnerPayout / 100).toFixed(2)}`
+    );
+
+    return { 
+      noShowForfeit: true, 
+      matchId, 
+      winnerId, 
+      loserId: expectedPlayerId,
+      winnerPayout 
+    };
+  },
+  {
+    connection: redis,
+    concurrency: 20,
+  }
+);
+
 // ─── Event Handlers ──────────────────────────────────────────────────────────
 
 chessVerifyWorker.on('completed', (job, result) => {
@@ -256,6 +371,18 @@ disputeTimeoutWorker.on('error', (err) => {
   console.error('[dispute-timeout] Worker error:', err);
 });
 
+noShowTimeoutWorker.on('completed', (job, result) => {
+  console.log(`[no-show-timeout] Job ${job.id} completed:`, result);
+});
+
+noShowTimeoutWorker.on('failed', (job, err) => {
+  console.error(`[no-show-timeout] Job ${job?.id} failed:`, err.message);
+});
+
+noShowTimeoutWorker.on('error', (err) => {
+  console.error('[no-show-timeout] Worker error:', err);
+});
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 
 async function gracefulShutdown() {
@@ -264,6 +391,7 @@ async function gracefulShutdown() {
   await Promise.all([
     chessVerifyWorker.close(),
     disputeTimeoutWorker.close(),
+    noShowTimeoutWorker.close(),
   ]);
 
   await redis.quit();
@@ -279,3 +407,6 @@ process.on('SIGINT', gracefulShutdown);
 console.log('Ignite worker started');
 console.log('  - chess-verify queue: listening');
 console.log('  - dispute-timeout queue: listening');
+console.log('  - no-show-timeout queue: listening');
+
+export { noShowTimeoutWorker };

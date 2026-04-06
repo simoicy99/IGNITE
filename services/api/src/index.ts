@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 
 import authPlugin from './plugins/auth';
 import geoGatePlugin from './plugins/geoGate';
@@ -12,6 +13,8 @@ import matchRoutes from './routes/matches';
 import disputeRoutes from './routes/disputes';
 import adminRoutes from './routes/admin';
 import webhookRoutes from './routes/webhooks';
+import healthRoutes from './routes/health';
+import nuveiWebhookRoutes from './routes/nuvei-webhooks';
 
 const PORT = parseInt(process.env.API_PORT ?? '3001');
 const HOST = process.env.API_HOST ?? '0.0.0.0';
@@ -47,6 +50,18 @@ async function buildApp() {
     },
   });
 
+  // Rate limiting
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    keyGenerator: (req) => req.userId || req.ip,
+    errorResponseBuilder: (req, context) => ({
+      success: false,
+      error: 'Rate limit exceeded',
+      retryAfter: context.after,
+    }),
+  });
+
   // ─── Custom Plugins ──────────────────────────────────────────────────────────
 
   await app.register(authPlugin);
@@ -55,12 +70,14 @@ async function buildApp() {
   // ─── Routes ─────────────────────────────────────────────────────────────────
 
   await app.register(webhookRoutes); // No prefix - Stripe needs raw path
+  await app.register(nuveiWebhookRoutes); // No prefix - Nuvei webhooks
   await app.register(authRoutes, { prefix: '/api/v1' });
   await app.register(feedRoutes, { prefix: '/api/v1' });
   await app.register(walletRoutes, { prefix: '/api/v1' });
   await app.register(matchRoutes, { prefix: '/api/v1' });
   await app.register(disputeRoutes, { prefix: '/api/v1' });
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
+  await app.register(healthRoutes, { prefix: '/api/v1' });
 
   // ─── Health Check ────────────────────────────────────────────────────────────
 
