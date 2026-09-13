@@ -1,6 +1,10 @@
-# Ignite MVP
+# Ignite
 
-A competitive gaming wagering platform for Chess and NBA 2K matches.
+**Competitive gaming, from challenge to settlement.**
+
+An MVP for chess and NBA 2K wagering matches, bringing together an Expo mobile app, an admin console, a double-entry ledger, and dispute resolution. The Stripe integration uses test mode.
+
+[Quick start](#quick-start) · [Architecture](#architecture) · [API reference](docs/API.md)
 
 ## Stack
 
@@ -23,8 +27,8 @@ A competitive gaming wagering platform for Chess and NBA 2K matches.
 ### 1. Clone and install
 
 ```bash
-git clone <repo>
-cd ignite
+git clone https://github.com/simoicy99/IGNITE.git
+cd IGNITE
 pnpm install
 ```
 
@@ -131,7 +135,7 @@ ignite/
 
 ## API Endpoints
 
-See `docs/API.md` for full API documentation.
+See the [API reference](docs/API.md) for full API documentation.
 
 ## Database
 
